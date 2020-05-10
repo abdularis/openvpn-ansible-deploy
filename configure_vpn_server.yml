@@ -1,0 +1,92 @@
+---
+- hosts: vpn_server
+  become: yes
+  vars:
+    server_port: 1194
+    server_proto: udp
+    server_cert: server-vpn1.crt
+    server_priv: server-vpn1.key
+    server_dh_param: dh.pem
+
+  tasks:
+    - name: Run apt update
+      apt: update_cache=true
+
+    - name: Install OpenVPN
+      apt:
+        name: openvpn
+        state: latest
+
+    - name: Copy openvpn server configuration
+      template:
+        src: template/server.conf
+        dest: /etc/openvpn/server.conf
+
+    - name: Copy ca.crt
+      copy:
+        src: files/ca.crt
+        dest: /etc/openvpn/ca.crt
+
+    - name: Copy dh.pem
+      copy:
+        src: files/dh.pem
+        dest: /etc/openvpn/dh.pem
+
+    - name: Copy server certificate
+      copy:
+        src: "files/{{ server_cert }}"
+        dest: "/etc/openvpn/{{ server_cert }}"
+
+    - name: Copy server private key
+      copy:
+        src: "files/{{ server_priv }}"
+        dest: "/etc/openvpn/{{ server_priv }}"
+
+    - name: Generate TLS Auth key
+      shell:
+        chdir: /etc/openvpn
+        cmd: openvpn --genkey --secret ta.key
+
+    - name: Fetch generated TLS Auth key (ta.key)
+      fetch:
+        flat: yes
+        src: /etc/openvpn/ta.key
+        dest: files/ta.key
+
+    - name: Configure IP forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        state: present
+
+    - name: Add ufw before content
+      blockinfile:
+        path: /etc/ufw/before.rules
+        insertbefore: BOF
+        content: |
+          # NAT table rules
+          *nat
+          :POSTROUTING ACCEPT [0:0]
+          -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
+          COMMIT
+
+    - name: Enable ufw forwarding policy
+      lineinfile:
+        line: "DEFAULT_FORWARD_POLICY=\"ACCEPT\""
+        path: /etc/default/ufw
+        regexp: "DEFAULT_FORWARD_POLICY=\"DROP\""
+
+    - name: Enable ufw for openvpn and ssh
+      shell:
+        cmd: ufw allow openvpn && ufw allow OpenSSH
+
+    - name: Enable ufw
+      shell:
+        cmd: ufw --force enable
+
+    - name: Start OpenVPN server
+      service:
+        name: openvpn@server
+        state: restarted
+        daemon_reload: yes
+        enabled: yes

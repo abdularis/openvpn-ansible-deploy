@@ -1,0 +1,84 @@
+---
+- hosts: ca_host
+  connection: local
+  vars:
+    work_dir: /home/aris
+    pki_directory: "{{ work_dir }}/openvpn-ca"
+    server_certificate_name: "server-vpn1"
+
+    easyrsa_req_country: US
+    easyrsa_req_province: California
+    easyrsa_req_city: San Francisco
+    easyrsa_req_org: Copyleft Certificate Co
+    easyrsa_req_email: me@example.net
+    easyrsa_req_ou: My Organizational Unit
+
+  tasks:
+    - name: Download easy rsa tool
+      get_url: 
+        url: https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.7/EasyRSA-3.0.7.tgz
+        dest: "{{ work_dir }}/easyrsa.tgz"
+        mode: 0666
+
+    - name: Extract easyrsa.tgz
+      unarchive:
+        src: "{{ work_dir }}/easyrsa.tgz"
+        dest: "{{ work_dir }}"
+
+    - name: Remove existing EasyRSA directory
+      file:
+        path: "{{ work_dir }}/EasyRSA"
+        state: absent
+
+    - name: Rename extracted easyrsa directory
+      shell:
+        cmd: "mv {{ work_dir }}/EasyRSA-3.0.7 {{ work_dir }}/EasyRSA"
+
+    - name: Copy easyrsa variables
+      template:
+        src: "template/vars.easyrsa.tpl"
+        dest: "{{ work_dir }}/EasyRSA/vars"
+
+    - name: Initialize public key infrastructure
+      shell:
+        chdir: "{{ work_dir }}/EasyRSA/"
+        cmd: "yes 'yes' | ./easyrsa init-pki"
+
+    - name: Create CA certificate and private key
+      shell:
+        chdir: "{{ work_dir }}/EasyRSA/"
+        cmd: "yes '' | ./easyrsa build-ca nopass"
+
+    - name: Create dh parameters
+      shell:
+        chdir: "{{ work_dir }}/EasyRSA/"
+        cmd: "./easyrsa gen-dh"
+
+    - name: Create server certificate and key
+      shell:
+        chdir: "{{ work_dir }}/EasyRSA"
+        cmd: "./easyrsa build-server-full {{ server_certificate_name }} nopass"
+
+    - name: Copy ca.crt
+      copy:
+        src: "{{ pki_directory }}/ca.crt"
+        remote_src: yes
+        dest: files/ca.crt
+
+    - name: Copy dh.pem
+      copy:
+        src: "{{ pki_directory }}/dh.pem"
+        remote_src: yes
+        dest: files/dh.pem
+
+    - name: Copy server certificate
+      copy:
+        src: "{{ pki_directory }}/issued/{{ server_certificate_name }}.crt"
+        remote_src: yes
+        dest: "files/{{ server_certificate_name }}.crt"
+
+    - name: Copy server private key
+      copy:
+        src: "{{ pki_directory }}/private/{{ server_certificate_name }}.key"
+        remote_src: yes
+        dest: "files/{{ server_certificate_name }}.key"
